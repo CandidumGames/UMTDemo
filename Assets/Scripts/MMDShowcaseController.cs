@@ -19,8 +19,12 @@ namespace UMTDemo
         [SerializeField] private OrbitCameraController m_Orbit;
         [SerializeField] private VMDTimelinePlayer m_Player;
         [SerializeField] private float m_FrameRate = 60.0f;
-        [Tooltip("Bake physics into the motion clip. When off, physics runs live at runtime and IK/constraints come baked in the clip.")]
+        [Tooltip("Run the live Bullet physics solver at runtime, layered on top of the baked-FK motion clip.")]
+        [SerializeField] private bool m_RuntimePhysics = true;
+        [Tooltip("Bake physics into the motion clip during VMD conversion. Independent of the live runtime solver; read the next time a motion is converted.")]
         [SerializeField] private bool m_BakePhysics;
+        [Tooltip("Run GPU SDEF skinning for meshes that contain SDEF vertices.")]
+        [SerializeField] private bool m_SDEFSkinning = true;
         [Tooltip("UMTResources asset providing the rename/romanization lists. Leave empty to load it from the package Resources folder at runtime.")]
         [SerializeField] private UMTResources m_Resources;
 
@@ -32,6 +36,7 @@ namespace UMTDemo
         private string m_MotionName = string.Empty;
         private string m_CameraName = string.Empty;
         private bool m_VMDCameraMode;
+        private bool m_BodyClipHasBakedPhysics; // the loaded body clip carries baked physics; live runtime physics is locked off while true
         private bool m_Busy;
         private UMTFrameBudget m_FrameBudget = new UMTFrameBudget(10.0); // 10 ms per frame for long-running tasks
         private PMXAnimationPaths m_Paths = new PMXAnimationPaths(); // precomputed bone/morph paths for the loaded model
@@ -50,8 +55,14 @@ namespace UMTDemo
         /// <summary>Raised when the active camera mode changes; argument is true for VMD camera, false for user camera.</summary>
         public event Action<bool> CameraModeChanged;
 
+        /// <summary>Raised when the live runtime physics mode changes; argument is true when the Bullet solver runs at runtime.</summary>
+        public event Action<bool> RuntimePhysicsChanged;
+
         /// <summary>Raised when the physics-baking mode changes; argument is true when physics is baked into the clip.</summary>
         public event Action<bool> BakePhysicsChanged;
+
+        /// <summary>Raised when GPU SDEF skinning is toggled; argument is true when SDEF skinning runs.</summary>
+        public event Action<bool> SDEFChanged;
 
         /// <summary>Raised when the loaded model, motion, or camera name changes.</summary>
         public event Action InfoChanged;
@@ -71,8 +82,17 @@ namespace UMTDemo
         /// <summary>True when the camera is currently being driven by the VMD timeline.</summary>
         public bool vmdCameraMode => m_VMDCameraMode;
 
-        /// <summary>True when physics is baked into the motion clip rather than simulated live at runtime.</summary>
+        /// <summary>True when the live Bullet physics solver runs at runtime.</summary>
+        public bool runtimePhysics => m_RuntimePhysics;
+
+        /// <summary>True when the loaded clip carries baked physics, so live runtime physics is locked off until the animation is reset or a non-baked motion is loaded.</summary>
+        public bool runtimePhysicsLocked => m_BodyClipHasBakedPhysics;
+
+        /// <summary>True when physics is baked into the motion clip during VMD conversion.</summary>
         public bool bakePhysics => m_BakePhysics;
+
+        /// <summary>True when GPU SDEF skinning runs for SDEF meshes.</summary>
+        public bool sdefSkinning => m_SDEFSkinning;
 
         /// <summary>Name of the loaded PMX model, or empty when none is loaded.</summary>
         public string modelName => m_ModelName;
@@ -154,7 +174,24 @@ namespace UMTDemo
             CameraModeChanged?.Invoke(useVMD);
         }
 
-        /// <summary>Toggles whether physics is baked into the motion clip. Re-converts the current motion so its bake state matches.</summary>
+        /// <summary>Toggles the live Bullet physics solver. Applies immediately to the loaded model and re-settles the simulation.</summary>
+        public void SetRuntimePhysics(bool value)
+        {
+            // A clip baked with physics already carries the simulation; live physics stays locked off until the
+            // animation is reset or a non-baked motion is loaded, so ignore attempts to turn it back on.
+            if (m_Busy || m_RuntimePhysics == value || (value && m_BodyClipHasBakedPhysics))
+            {
+                return;
+            }
+
+            m_RuntimePhysics = value;
+            ApplyPhysicsMode();
+            // Re-settle the live simulation (or clear it) so the new mode takes effect from the current pose.
+            ResetPhysics();
+            RuntimePhysicsChanged?.Invoke(value);
+        }
+
+        /// <summary>Toggles whether physics is baked into the motion clip during VMD conversion.</summary>
         public void SetBakePhysics(bool value)
         {
             // The mode is read the next time a motion is converted; changing it does not affect an already-loaded clip.
@@ -165,6 +202,22 @@ namespace UMTDemo
 
             m_BakePhysics = value;
             BakePhysicsChanged?.Invoke(value);
+        }
+
+        /// <summary>Toggles GPU SDEF skinning. Applies immediately to the loaded model.</summary>
+        public void SetSDEF(bool value)
+        {
+            if (m_SDEFSkinning == value)
+            {
+                return;
+            }
+
+            m_SDEFSkinning = value;
+            if (m_TransformManager != null)
+            {
+                m_TransformManager.doSDEFSkinning = value;
+            }
+            SDEFChanged?.Invoke(value);
         }
 
         /// <summary>Re-frames the user camera on the model.</summary>
@@ -228,6 +281,13 @@ namespace UMTDemo
 
             m_BodyClip = null;
             m_MotionName = string.Empty;
+
+            // The baked clip is gone, so live physics is no longer locked; restore the requested mode.
+            if (m_BodyClipHasBakedPhysics)
+            {
+                m_BodyClipHasBakedPhysics = false;
+                RuntimePhysicsChanged?.Invoke(m_RuntimePhysics);
+            }
 
             // Idle the solver, drop the body track, and restore the model to its default stance.
 
@@ -319,6 +379,7 @@ namespace UMTDemo
                     m_Renderers[i].updateWhenOffscreen = true;
                 }
                 m_BodyClip = null;        // a previous motion was baked for the old model
+                m_BodyClipHasBakedPhysics = false; // no clip yet, so live physics is not locked
                 m_ModelName = Path.GetFileNameWithoutExtension(path);
                 m_MotionName = string.Empty; // body clip cleared with the new model
 
@@ -326,7 +387,8 @@ namespace UMTDemo
                 m_TransformManager = result.mmdTransformResult.transformManager;
                 if (m_TransformManager != null)
                 {
-                    m_TransformManager.transformEnabled = false;
+                    m_TransformManager.transformEnabled = true;
+                    m_TransformManager.doSDEFSkinning = m_SDEFSkinning;
                 }
 
                 FrameModel(result.root);
@@ -375,6 +437,16 @@ namespace UMTDemo
 
                 m_BodyClip = clip;
                 m_MotionName = Path.GetFileNameWithoutExtension(path);
+
+                // A clip baked with physics carries the simulation itself; force the live solver off and lock it
+                // there so the two cannot double up, until the animation is reset or a non-baked motion is loaded.
+                m_BodyClipHasBakedPhysics = m_BakePhysics;
+                if (m_BodyClipHasBakedPhysics && m_RuntimePhysics)
+                {
+                    m_RuntimePhysics = false;
+                    RuntimePhysicsChanged?.Invoke(false);
+                }
+
                 ApplyPhysicsMode();
                 RebuildTimeline();
                 // RebuildTimeline rewinds to frame 0; re-settle physics to the new motion's first pose.
@@ -448,41 +520,48 @@ namespace UMTDemo
 #endif
         }
 
-        // Configures the runtime solver to match the bake mode: baked physics -> clip is authoritative (solver off);
-        // live physics -> solver runs physics only, with IK and constraints left to the baked clip.
+        // Configures the runtime solver to match the runtime-physics toggle. A motion clip always bakes IK and
+        // constraints to FK, so with live physics on the solver only layers physics on top; with it off the clip
+        // (or, when none is loaded, a plain constraint/IK solve) is authoritative and the physics solver stays idle.
         private void ApplyPhysicsMode()
         {
-            if (m_ImportResult == null)
-            {
-                return;
-            }
-
-            MMDPhysicsManager physicsManager = m_TransformManager.physicsManager;
             if (m_TransformManager == null)
             {
                 return;
             }
 
-            if (m_BakePhysics)
+            MMDPhysicsManager physicsManager = m_TransformManager.physicsManager;
+
+            if (m_RuntimePhysics)
             {
-                // The clip already carries baked physics; keep the live solver idle so it cannot fight it or
-                // touch the native context.
-                m_TransformManager.transformEnabled = false;
+                m_TransformManager.solveConstraints = false;
+                m_TransformManager.solveIK = false;
+                m_TransformManager.livePhysics = true;
+                m_TransformManager.transformEnabled = true;
+
+                // The native Bullet context is created in MMDTransformManager.OnEnable, but during the runtime build that
+                // OnEnable fired before its physicsManager field was wired, so Initialize() never ran. Cycle enabled now
+                // (with physicsManager set) to force a clean OnEnable -> InitializePhysics; otherwise LateUpdate's
+                // ResetPhysics hits an uninitialized native handle and crashes the player.
+                if (physicsManager != null && m_TransformManager.gameObject.activeInHierarchy)
+                {
+                    m_TransformManager.enabled = true;
+                }
                 return;
             }
 
-            m_TransformManager.solveConstraints = false;
-            m_TransformManager.solveIK = false;
-            m_TransformManager.livePhysics = true;
-            m_TransformManager.transformEnabled = true;
-
-            // The native Bullet context is created in MMDTransformManager.OnEnable, but during the runtime build that
-            // OnEnable fired before its physicsManager field was wired, so Initialize() never ran. Cycle enabled now
-            // (with physicsManager set) to force a clean OnEnable -> InitializePhysics; otherwise LateUpdate's
-            // ResetPhysics hits an uninitialized native handle and crashes the player.
-            if (physicsManager != null && m_TransformManager.gameObject.activeInHierarchy)
+            // Runtime physics off: keep the physics solver idle. A loaded clip drives the whole pose, so idle the
+            // solver entirely; with no clip, keep solving constraints/IK so the model still holds a valid pose.
+            m_TransformManager.livePhysics = false;
+            if (m_BodyClip != null)
             {
-                m_TransformManager.enabled = true;
+                m_TransformManager.transformEnabled = false;
+            }
+            else
+            {
+                m_TransformManager.solveConstraints = true;
+                m_TransformManager.solveIK = true;
+                m_TransformManager.transformEnabled = true;
             }
         }
 

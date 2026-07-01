@@ -9,7 +9,7 @@ using UnityEngine.UI;
 namespace UMTDemo
 {
     /// <summary>
-    /// Builds the runtime showcase UI in code (uGUI + TextMeshPro) and wires it to <see cref="MMDShowcaseController"/> and its <see cref="VMDTimelinePlayer"/>: Load PMX / Load Motion / Load Camera buttons, a camera-mode toggle, a reset button, a transport with play/pause, a scrub slider, an editable frame number, and a Hide-UI toggle (also the <c>H</c> key).
+    /// Builds the runtime showcase UI in code (uGUI + TextMeshPro) and wires it to <see cref="MMDShowcaseController"/> and its <see cref="VMDTimelinePlayer"/>: Load PMX / Load Motion / Load Camera buttons, a runtime-physics toggle, a bake-physics toggle, an SDEF toggle, a camera-mode toggle, a reset button, a transport with play/pause, a scrub slider, an editable frame number, and a Hide-UI toggle (also the <c>H</c> key).
     /// </summary>
     public sealed class ShowcaseUI : MonoBehaviour
     {
@@ -30,11 +30,15 @@ namespace UMTDemo
         private TextMeshProUGUI m_CameraLabel;
         private TextMeshProUGUI m_FrameTotalLabel;
         private Button m_CameraButton;
-        private Button m_PhysicsButton;
+        private Button m_RuntimePhysicsButton;
+        private Button m_BakePhysicsButton;
+        private Button m_SDEFButton;
         private Button m_ResetAnimButton;
         private Button m_PlayPauseButton;
         private Button m_RewindButton;
-        private TextMeshProUGUI m_PhysicsLabel;
+        private TextMeshProUGUI m_RuntimePhysicsLabel;
+        private TextMeshProUGUI m_BakePhysicsLabel;
+        private TextMeshProUGUI m_SDEFLabel;
         private Slider m_Slider;
         private TMP_InputField m_FrameInput;
         private Image m_ProgressFill;
@@ -55,7 +59,9 @@ namespace UMTDemo
             {
                 m_Controller.StatusChanged += OnStatusChanged;
                 m_Controller.CameraModeChanged += OnCameraModeChanged;
+                m_Controller.RuntimePhysicsChanged += OnRuntimePhysicsChanged;
                 m_Controller.BakePhysicsChanged += OnBakePhysicsChanged;
+                m_Controller.SDEFChanged += OnSDEFChanged;
                 m_Controller.BusyChanged += OnBusyChanged;
                 m_Controller.ProgressChanged += OnProgressChanged;
                 m_Controller.InfoChanged += OnInfoChanged;
@@ -68,7 +74,9 @@ namespace UMTDemo
             {
                 m_Controller.StatusChanged -= OnStatusChanged;
                 m_Controller.CameraModeChanged -= OnCameraModeChanged;
+                m_Controller.RuntimePhysicsChanged -= OnRuntimePhysicsChanged;
                 m_Controller.BakePhysicsChanged -= OnBakePhysicsChanged;
+                m_Controller.SDEFChanged -= OnSDEFChanged;
                 m_Controller.BusyChanged -= OnBusyChanged;
                 m_Controller.ProgressChanged -= OnProgressChanged;
                 m_Controller.InfoChanged -= OnInfoChanged;
@@ -102,9 +110,20 @@ namespace UMTDemo
                 m_CameraButton.interactable = hasTimeline && player.hasCamera;
             }
 
-            if (m_PhysicsButton != null)
+            if (m_RuntimePhysicsButton != null)
             {
-                m_PhysicsButton.interactable = !m_Controller.busy;
+                // Locked off while the loaded clip carries baked physics, until the animation is reset.
+                m_RuntimePhysicsButton.interactable = !m_Controller.busy && !m_Controller.runtimePhysicsLocked;
+            }
+
+            if (m_BakePhysicsButton != null)
+            {
+                m_BakePhysicsButton.interactable = !m_Controller.busy;
+            }
+
+            if (m_SDEFButton != null)
+            {
+                m_SDEFButton.interactable = !m_Controller.busy;
             }
 
             if (m_ResetAnimButton != null)
@@ -177,11 +196,27 @@ namespace UMTDemo
             }
         }
 
+        private void OnRuntimePhysicsChanged(bool on)
+        {
+            if (m_RuntimePhysicsLabel != null)
+            {
+                m_RuntimePhysicsLabel.text = on ? "Runtime Physics: On" : "Runtime Physics: Off";
+            }
+        }
+
         private void OnBakePhysicsChanged(bool baked)
         {
-            if (m_PhysicsLabel != null)
+            if (m_BakePhysicsLabel != null)
             {
-                m_PhysicsLabel.text = baked ? "Physics: Baked" : "Physics: Live";
+                m_BakePhysicsLabel.text = baked ? "Bake Physics: On" : "Bake Physics: Off";
+            }
+        }
+
+        private void OnSDEFChanged(bool on)
+        {
+            if (m_SDEFLabel != null)
+            {
+                m_SDEFLabel.text = on ? "SDEF: On" : "SDEF: Off";
             }
         }
 
@@ -249,7 +284,9 @@ namespace UMTDemo
             OnCameraModeChanged(false);
             if (m_Controller != null)
             {
+                OnRuntimePhysicsChanged(m_Controller.runtimePhysics);
                 OnBakePhysicsChanged(m_Controller.bakePhysics);
+                OnSDEFChanged(m_Controller.sdefSkinning);
                 OnInfoChanged();
             }
         }
@@ -301,8 +338,12 @@ namespace UMTDemo
         {
             GameObject bar = CreateBar("TopBar", parent, true);
             CreateButton(bar.transform, "Load PMX", 120.0f, () => m_Controller.LoadPMX());
-            m_PhysicsButton = CreateButton(bar.transform, "Physics: Live", 150.0f, () => m_Controller.SetBakePhysics(!m_Controller.bakePhysics));
-            m_PhysicsLabel = m_PhysicsButton.GetComponentInChildren<TextMeshProUGUI>();
+            m_RuntimePhysicsButton = CreateButton(bar.transform, "Runtime Physics: On", 190.0f, () => m_Controller.SetRuntimePhysics(!m_Controller.runtimePhysics));
+            m_RuntimePhysicsLabel = m_RuntimePhysicsButton.GetComponentInChildren<TextMeshProUGUI>();
+            m_BakePhysicsButton = CreateButton(bar.transform, "Bake Physics: Off", 180.0f, () => m_Controller.SetBakePhysics(!m_Controller.bakePhysics));
+            m_BakePhysicsLabel = m_BakePhysicsButton.GetComponentInChildren<TextMeshProUGUI>();
+            m_SDEFButton = CreateButton(bar.transform, "SDEF: On", 120.0f, () => m_Controller.SetSDEF(!m_Controller.sdefSkinning));
+            m_SDEFLabel = m_SDEFButton.GetComponentInChildren<TextMeshProUGUI>();
             CreateButton(bar.transform, "Load Motion", 120.0f, () => m_Controller.LoadMotion());
             CreateButton(bar.transform, "Load Camera", 120.0f, () => m_Controller.LoadCamera());
             m_ResetAnimButton = CreateButton(bar.transform, "Reset Anim", 120.0f, () => m_Controller.ResetAnimation());

@@ -6,9 +6,11 @@ Unity version : 6000.3.16f1
 ## Controls
 
 - **Load PMX** : load an MMD character and import it into the scene. In the browser select the folder containing the model (so its textures load with it); on desktop pick the model file directly.
-- **Physics: Live / Baked** : toggle whether physics is simulated live or baked into the motion.
-- **Load Motion** : pick an MMD motion file and play it on the loaded character.
-- **Load Camera** : pick an MMD camera motion file and use it to drive the camera.
+- **Runtime Physics: On / Off** : toggle the live physics solver. Locked off while a physics-baked motion is loaded (the motion already carries the simulation), until you reset or load a non-baked motion.
+- **Bake Physics: On / Off** : choose whether physics is baked into the motion when it is loaded. Applies to the next motion you load.
+- **SDEF: On / Off** : toggle GPU SDEF skinning for smoother deformation on models that use it.
+- **Load Motion** : pick an MMD motion file for the loaded character; it loads paused at the start, so press Play to run it.
+- **Load Camera** : pick an MMD camera motion file; it switches the camera to VMD mode and loads paused, ready to Play.
 - **Reset Anim** : return the character to its default pose.
 - **Camera: User / VMD** : switch between freely orbiting the camera and following the loaded camera motion.
 - **Reset View** : return the user camera to its starting position.
