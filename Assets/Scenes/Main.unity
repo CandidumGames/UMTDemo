@@ -230,9 +230,9 @@ MonoBehaviour:
   m_Orbit: {fileID: 201266105}
   m_Player: {fileID: 201266106}
   m_FrameRate: 30
+  m_RuntimePhysics: 1
   m_BakePhysics: 0
-  m_UVBlitShader: {fileID: 4800000, guid: b570aea26a556c94881c5b22fd27e4be, type: 3}
-  m_AlphaDetectorShader: {fileID: 7200000, guid: c3cc62e8ded66394c91177f30399d5f7, type: 3}
+  m_SDEFSkinning: 1
   m_Resources: {fileID: 11400000, guid: 9e777c4d3ffbea741a7f8bc508e02d9b, type: 2}
 --- !u!1 &342563946
 GameObject:

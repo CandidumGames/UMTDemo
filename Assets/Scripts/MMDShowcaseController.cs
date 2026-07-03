@@ -377,6 +377,20 @@ namespace UMTDemo
                 for (int i = 0; i < m_Renderers.Length; ++i)
                 {
                     m_Renderers[i].updateWhenOffscreen = true;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    Material[] materials = m_Renderers[i].sharedMaterials;
+                    for (int j = 0; j < materials.Length; ++j)
+                    {
+                        if (materials[j] != null && materials[j].shader.name == "Hidden/lilToonMultiOutline")
+                        {
+                            materials[j].shader = Shader.Find("_workaround/lilToonMultiOutlineWebGL");
+                        }
+                        else if (materials[j] != null && materials[j].shader.name == "_lil/lilToonMulti")
+                        {
+                            materials[j].shader = Shader.Find("_workaround/lilToonMultiWebGL");
+                        }
+                    }
+#endif
                 }
                 m_BodyClip = null;        // a previous motion was baked for the old model
                 m_BodyClipHasBakedPhysics = false; // no clip yet, so live physics is not locked
@@ -389,6 +403,8 @@ namespace UMTDemo
                 {
                     m_TransformManager.transformEnabled = true;
                     m_TransformManager.doSDEFSkinning = m_SDEFSkinning;
+                    m_TransformManager.sdefSkinningMode = SDEFSkinningMode.CPU;
+                    m_TransformManager.sdefComputeShader = null;
                 }
 
                 FrameModel(result.root);
