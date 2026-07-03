@@ -381,13 +381,40 @@ namespace UMTDemo
                     Material[] materials = m_Renderers[i].sharedMaterials;
                     for (int j = 0; j < materials.Length; ++j)
                     {
-                        if (materials[j] != null && materials[j].shader.name == "Hidden/lilToonMultiOutline")
+                        Material material = materials[j];
+                        if (material == null || material.shader == null)
                         {
-                            materials[j].shader = Shader.Find("_workaround/lilToonMultiOutlineWebGL");
+                            continue;
                         }
-                        else if (materials[j] != null && materials[j].shader.name == "_lil/lilToonMulti")
+                        if (material.shader.name == "Hidden/lilToonMultiOutline")
                         {
-                            materials[j].shader = Shader.Find("_workaround/lilToonMultiWebGL");
+                            material.shader = Shader.Find("_workaround/lilToonMultiOutlineWebGL");
+                        }
+                        else if (material.shader.name == "_lil/lilToonMulti")
+                        {
+                            material.shader = Shader.Find("_workaround/lilToonMultiWebGL");
+                        }
+                        float transparentMode = 0;
+                        float zWrite = 0;
+                        if (material.HasProperty("_TransparentMode"))
+                        {
+                            transparentMode = material.GetFloat("_TransparentMode");
+                        }
+                        if (material.HasProperty("_ZWrite"))
+                        {
+                            zWrite = material.GetFloat("_ZWrite");
+                        }
+                        if (transparentMode == 0)
+                        {
+                            material.renderQueue = 2000 + j;
+                        }
+                        else if (zWrite > 0)
+                        {
+                            material.renderQueue = 2450 + j;
+                        }
+                        else
+                        {
+                            material.renderQueue = 3000 + j;
                         }
                     }
 #endif
