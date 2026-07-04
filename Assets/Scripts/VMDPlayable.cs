@@ -108,6 +108,10 @@ namespace UMTDemo
         private void Resolve()
         {
             VMDClipData bones = clipData.bones;
+            if (clipData.baked)
+            {
+                FixBakedRotationContinuity(bones);
+            }
             m_BoneTransforms = new Transform[bones.paths.Length];
             for (int i = 0; i < bones.paths.Length; ++i)
             {
@@ -190,6 +194,84 @@ namespace UMTDemo
             {
                 MorphTarget target = m_MorphTargets[i];
                 target.renderer.SetBlendShapeWeight(target.blendShapeIndex, target.curve.Evaluate(time));
+            }
+        }
+
+        /// <summary>
+        /// Restores quaternion sign continuity on every bone's baked rotation channels. The bake can store adjacent
+        /// keys as q and -q (the same rotation in the opposite hemisphere); the editor-built AnimationClip repairs
+        /// this via <see cref="AnimationClip.EnsureQuaternionContinuity"/>, but the raw runtime curves never get that
+        /// pass, and evaluating the four channels independently between sign-flipped keys collapses the normalized
+        /// result toward identity for sub-key samples. Idempotent, so re-running on shared clip data is safe.
+        /// </summary>
+        private static void FixBakedRotationContinuity(VMDClipData bones)
+        {
+            for (int i = 0; i < bones.paths.Length; ++i)
+            {
+                int channelStart = i * k_BakedBoneChannelCount;
+                EnsureQuaternionContinuity(
+                    bones.curves[channelStart + 3],
+                    bones.curves[channelStart + 4],
+                    bones.curves[channelStart + 5],
+                    bones.curves[channelStart + 6]);
+            }
+        }
+
+        private static void EnsureQuaternionContinuity(AnimationCurve rotX, AnimationCurve rotY, AnimationCurve rotZ, AnimationCurve rotW)
+        {
+            if (rotX == null || rotY == null || rotZ == null || rotW == null)
+            {
+                return;
+            }
+
+            Keyframe[] keysX = rotX.keys;
+            Keyframe[] keysY = rotY.keys;
+            Keyframe[] keysZ = rotZ.keys;
+            Keyframe[] keysW = rotW.keys;
+            int keyCount = keysX.Length;
+            if (keyCount < 2 || keysY.Length != keyCount || keysZ.Length != keyCount || keysW.Length != keyCount)
+            {
+                return;
+            }
+
+            bool anyFlipped = false;
+            for (int i = 1; i < keyCount; ++i)
+            {
+                float dot = keysX[i].value * keysX[i - 1].value + keysY[i].value * keysY[i - 1].value + keysZ[i].value * keysZ[i - 1].value + keysW[i].value * keysW[i - 1].value;
+                if (dot < 0.0f)
+                {
+                    keysX[i].value = -keysX[i].value;
+                    keysY[i].value = -keysY[i].value;
+                    keysZ[i].value = -keysZ[i].value;
+                    keysW[i].value = -keysW[i].value;
+                    anyFlipped = true;
+                }
+            }
+
+            if (!anyFlipped)
+            {
+                return;
+            }
+
+            ApplyLinearTangents(keysX);
+            ApplyLinearTangents(keysY);
+            ApplyLinearTangents(keysZ);
+            ApplyLinearTangents(keysW);
+            rotX.keys = keysX;
+            rotY.keys = keysY;
+            rotZ.keys = keysZ;
+            rotW.keys = keysW;
+        }
+
+        // Mirrors the converter's baked-key tangent scheme: each segment's slope becomes the previous key's
+        // outTangent and the next key's inTangent; the first inTangent and last outTangent stay 0.
+        private static void ApplyLinearTangents(Keyframe[] keyframes)
+        {
+            for (int i = 1; i < keyframes.Length; ++i)
+            {
+                float tangent = (keyframes[i].value - keyframes[i - 1].value) / (keyframes[i].time - keyframes[i - 1].time);
+                keyframes[i - 1].outTangent = tangent;
+                keyframes[i].inTangent = tangent;
             }
         }
 
